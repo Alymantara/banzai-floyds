@@ -1,7 +1,8 @@
 """Run BANZAI-FLOYDS offline on a directory of raw frames, with a local (SQLite) calibration database.
 
     banzai_floyds_offline setup-db  --db-address sqlite:///floyds.db
-    banzai_floyds_offline skyflats  --db-address ... --raw-dir skyflats/ --processed-dir processed/
+    banzai_floyds_offline fetch-skyflats --raw-dir skyflats/ [--site coj]
+    banzai_floyds_offline skyflats  --db-address ... --raw-dir skyflats/ --processed-dir processed/  (optional)
     banzai_floyds_offline run       --db-address ... --raw-dir raw/ --processed-dir processed/ --kind arcs
     banzai_floyds_offline chain     --db-address ... --raw-dir raw/ --processed-dir processed/
 
@@ -27,8 +28,8 @@ _context = None
 
 
 def setup_db(db_address):
-    """Create the calibration database with both FLOYDS sites and instruments, order locations, LSF parameters and
-    the flux standards."""
+    """Create the calibration database with both FLOYDS sites and instruments, order locations, LSF parameters, the
+    flux standards and the sky-flat order solutions shipped with the package."""
     import subprocess
     import sys
     from banzai_floyds import dbs
@@ -47,6 +48,8 @@ def setup_db(db_address):
     dbs.populate_order_heights_locations(db_address)
     dbs.populate_lsf_params(db_address)
     dbs.ingest_standards(db_address)
+    # the order solutions of all the sky flats in data/orders/skyflats.dat ship with the package
+    print('sky flats registered:', dbs.ingest_skyflats(db_address))
 
 
 def _context_for(db_address, processed_dir):
@@ -85,27 +88,68 @@ def _register_processed_skyflat(path, db_address, processed_dir):
     """Copy an archive-processed sky flat (-f91, with ORDERS and ORDER_COEFFS) into the processed tree and register
     it as an order solution, as if it had been processed here."""
     import shutil
+    from banzai_floyds.dbs import register_skyflat
     from astropy.io import fits
-    from banzai.dbs import get_session, get_instruments_at_site
-    from banzai_floyds.dbs import FLOYDSCalibrationImage
     header = fits.getheader(path, 'SCI')
-    site, camera = header['SITEID'].strip(), header['INSTRUME'].strip()
-    dateobs = datetime.datetime.fromisoformat(header['DATE-OBS'])
-    out_dir = os.path.join(processed_dir, site, camera, os.path.basename(path).split('-')[2], 'processed')
+    out_dir = os.path.join(processed_dir, header['SITEID'].strip(), header['INSTRUME'].strip(),
+                           os.path.basename(path).split('-')[2], 'processed')
     os.makedirs(out_dir, exist_ok=True)
-    name = os.path.basename(path)
-    shutil.copy(path, os.path.join(out_dir, name))
-    instrument = [i for i in get_instruments_at_site(site, db_address) if i.camera == camera][0]
-    with get_session(db_address=db_address) as session:
-        session.query(FLOYDSCalibrationImage).filter(FLOYDSCalibrationImage.filename == name).delete()
-        session.add(FLOYDSCalibrationImage(type='SKYFLAT', filename=name, filepath=out_dir, dateobs=dateobs,
-                                           datecreated=datetime.datetime.now(), instrument_id=instrument.id,
-                                           is_master=True, is_bad=False,
-                                           good_until=datetime.datetime(3000, 1, 1),
-                                           good_after=datetime.datetime(1000, 1, 1),
-                                           attributes={'slit_width': str(header['APERWID'])},
-                                           proposal=header.get('PROPID'), public_date=dateobs))
-        session.commit()
+    out = os.path.join(out_dir, os.path.basename(path))
+    shutil.copy(path, out)
+    register_skyflat(out, db_address)
+
+
+ARCHIVE_API = 'https://archive-api.lco.global/frames/'
+
+
+def _archive_get(url, max_wait=120.0):
+    """GET from the LCO archive, waiting out short 429 throttles (Retry-After) and giving up on long ones."""
+    import urllib.error
+    import urllib.request
+    request = urllib.request.Request(url, headers={'User-Agent': 'banzai-floyds-offline'})
+    for _ in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return response.read()
+        except urllib.error.HTTPError as error:
+            if error.code != 429:
+                raise
+            wait = float(error.headers.get('Retry-After', 60))
+            if wait > max_wait:
+                raise RuntimeError(f'LCO archive throttled for {wait:.0f} s; try again later') from error
+            time.sleep(wait)
+    raise RuntimeError('LCO archive kept throttling')
+
+
+def fetch_skyflats(raw_dir, site=None, pause=1.0):
+    """Download the raw sky flats listed in data/orders/skyflats.dat (public frames, by archive frame id) that are
+    not in raw_dir yet. One request a second: the archive throttles bursts for hours."""
+    import importlib.resources
+    import json
+    from astropy.io import ascii
+    table = ascii.read(os.path.join(importlib.resources.files('banzai_floyds'), 'data', 'orders', 'skyflats.dat'))
+    os.makedirs(raw_dir, exist_ok=True)
+    present = {os.path.basename(f).split('-x00')[0].split('-f91')[0] for f in glob.glob(os.path.join(raw_dir, '*'))}
+    fetched = 0
+    for row in table:
+        if site and row['site'] != site:
+            continue
+        root = row['filename'].split('-x00')[0]
+        if root in present:
+            continue
+        frame = json.loads(_archive_get(f'{ARCHIVE_API}{row["frameid"]}/'))
+        time.sleep(pause)
+        if frame.get('basename', '').split('-x00')[0] != root:
+            raise RuntimeError(f'archive frame {row["frameid"]} is {frame.get("basename")}, not {row["filename"]}')
+        data = _archive_get(frame['url'])
+        out = os.path.join(raw_dir, row['filename'])
+        with open(out + '.part', 'wb') as handle:
+            handle.write(data)
+        os.replace(out + '.part', out)
+        print('fetched', out, flush=True)
+        fetched += 1
+        time.sleep(pause)
+    return fetched
 
 
 def process_skyflats(db_address, raw_dir, processed_dir):
@@ -202,14 +246,20 @@ def chain(raw_dir, db_address, processed_dir, workers=4, window_days=60):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['setup-db', 'skyflats', 'run', 'chain'])
-    parser.add_argument('--db-address', required=True, help='e.g. sqlite:///floyds.db')
+    parser.add_argument('command', choices=['setup-db', 'fetch-skyflats', 'skyflats', 'run', 'chain'])
+    parser.add_argument('--db-address', help='e.g. sqlite:///floyds.db (all commands but fetch-skyflats)')
+    parser.add_argument('--site', choices=sorted(SITES), help='for fetch-skyflats: one site only')
     parser.add_argument('--raw-dir')
     parser.add_argument('--processed-dir')
     parser.add_argument('--kind', choices=KINDS, help='for run: which frames')
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--window-days', type=float, default=60.0, help='for chain: phase-master window')
     args = parser.parse_args(argv)
+    if args.command == 'fetch-skyflats':
+        print('sky flats fetched:', fetch_skyflats(args.raw_dir or 'skyflats', args.site))
+        return
+    if not args.db_address:
+        parser.error('--db-address is required')
     if args.command == 'setup-db':
         setup_db(args.db_address)
     elif args.command == 'skyflats':

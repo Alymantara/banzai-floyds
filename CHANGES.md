@@ -16,6 +16,10 @@ Improved reduction for reverberation mapping (see docs/INSTALL_RM.md; all on by 
 - Feige 67 (Oke 1990, extended beyond 9200 A with a fitted power law) and GD 153 (ESO X-shooter) added to the flux
   standards.
 - `banzai_floyds_offline skyflats` accepts archive-processed sky flats (`-f91` with `ORDER_COEFFS`).
+- The order solutions of all 31 sky flats in `data/orders/skyflats.dat` ship with the package
+  (`data/orders/skyflats/`, images zeroed, 5 MB) and `setup-db` registers them, so an installation needs no sky-flat
+  download. `banzai_floyds_offline fetch-skyflats` downloads the listed raw frames from the LCO archive, and
+  `scripts/pack_skyflats.py` rebuilds the shipped copies.
 - Telluric transmission applied only inside the absorption bands (1 % depth limits), from the median of the nine
   nearest standards scaled to the airmass; the O2 A band is flagged in science spectra (mask bit 2).
 - Ensemble flux calibration: median of the grey-normalised sensitivities of the nine nearest standards, grey level

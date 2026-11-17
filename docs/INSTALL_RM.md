@@ -70,13 +70,10 @@ Expected: 176 passed, 1 xfailed. The end-to-end tests (`test_e2e.py`) need LCO's
 `OPENTSDB_PYTHON_METRICS_TEST_MODE=True` (set by `benv`) stops BANZAI from trying to send metrics.
 
 ```bash
-# calibration database with both FLOYDS sites, order locations, LSF parameters and flux standards
+# calibration database with both FLOYDS sites, order locations, LSF parameters, flux standards and the sky-flat
+# order solutions (they ship with the package, one per frame of banzai_floyds/data/orders/skyflats.dat, and are
+# registered from where the package is installed: nothing to download)
 ./benv banzai_floyds_offline setup-db --db-address sqlite:///$PWD/floyds.db
-
-# sky flats: they fix the shape of the orders; the ones needed are listed in
-# banzai_floyds/data/orders/skyflats.dat (per site and epoch)
-./benv banzai_floyds_offline skyflats --db-address sqlite:///$PWD/floyds.db \
-    --raw-dir skyflats/ --processed-dir processed/
 
 # the whole reduction: arcs -> lamp flats -> fringe phase masters -> standards -> residual fringe templates ->
 # standards again -> science
@@ -102,7 +99,12 @@ EXTRACTED table use `mask == 0`; bit 2 marks the O2 A band in science spectra) a
   `work/scripts/build_trace_template.py`; without a template the trace falls back to the 1.1.0 polynomial). The
   residual fringe template is built per slit from the standards of that slit; without 6" standards there is none for
   the 6" slit.
-* **Sky flats.** `skyflats` takes raw sky flats or the archive-processed `-f91` files (which carry `ORDER_COEFFS`).
+* **Sky flats.** The order solutions of every sky flat in `data/orders/skyflats.dat` ship in
+  `banzai_floyds/data/orders/skyflats/` (images zeroed, ~170 kB each) and `setup-db` registers them with their
+  validity windows. Re-run `setup-db` if the package moves. To reprocess them, or after adding a new set to
+  `skyflats.dat`: `banzai_floyds_offline fetch-skyflats --raw-dir skyflats/` downloads the listed raw frames from the
+  LCO archive (public, one request a second), `banzai_floyds_offline skyflats ...` reduces them (it also takes the
+  archive-processed `-f91` files), and `python scripts/pack_skyflats.py processed/` writes the shipped copies.
   For OGG the only listed set is 2019-03-29; it works for the 2024-25 data.
 * **Flux standards.** Only stars in `banzai_floyds/data/standards` are used as standards (BD+28 4211, EG 274,
   Feige 34, Feige 67, Feige 110, GD 108, GD 153); other standards are reduced as science. Make sure every campaign has

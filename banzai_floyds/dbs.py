@@ -611,3 +611,33 @@ def get_calibration_path(filename: str, db_address: str):
     with get_session(db_address=db_address) as db_session:
         record = db_session.query(FLOYDSCalibrationImage).filter(FLOYDSCalibrationImage.filename == filename).first()
         return None if record is None else os.path.join(record.filepath, record.filename)
+
+
+def register_skyflat(path: str, db_address: str) -> None:
+    """Register a processed sky flat (-f91, with ORDERS and ORDER_COEFFS) where it is as an order solution."""
+    header = fits.getheader(path, 'SCI')
+    site, camera = header['SITEID'].strip(), header['INSTRUME'].strip()
+    dateobs = datetime.datetime.fromisoformat(header['DATE-OBS'])
+    name, directory = os.path.basename(path), os.path.dirname(os.path.abspath(path))
+    instrument = [i for i in get_instruments_at_site(site, db_address) if i.camera == camera][0]
+    with get_session(db_address=db_address) as session:
+        session.query(FLOYDSCalibrationImage).filter(FLOYDSCalibrationImage.filename == name).delete()
+        session.add(FLOYDSCalibrationImage(type='SKYFLAT', filename=name, filepath=directory,
+                                           dateobs=dateobs, datecreated=datetime.datetime.now(),
+                                           instrument_id=instrument.id, is_master=True, is_bad=False,
+                                           good_until=datetime.datetime(3000, 1, 1),
+                                           good_after=datetime.datetime(1000, 1, 1),
+                                           attributes={'slit_width': str(header['APERWID'])},
+                                           proposal=header.get('PROPID'), public_date=dateobs))
+        session.commit()
+
+
+def ingest_skyflats(db_address: str) -> int:
+    """Register the order solutions shipped with the package (data/orders/skyflats/, one per frame of
+    skyflats.dat) from where the package is installed, and bound their validity windows. Returns how many."""
+    directory = os.path.join(importlib.resources.files('banzai_floyds'), 'data', 'orders', 'skyflats')
+    paths = sorted(glob(os.path.join(directory, '*-f91.fits.fz')))
+    for path in paths:
+        register_skyflat(path, db_address)
+    bound_skyflats_to_windows(db_address)
+    return len(paths)
