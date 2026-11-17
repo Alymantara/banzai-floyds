@@ -49,7 +49,7 @@ a definition or threshold increases it.
 | `L1CRADD` | Groups added (compact strong hits LA Cosmic missed) | 0-6 / 0-3 |
 | `L1CRMISM` | Fraction of the orders where the matched partner differs over an extended area (partner cannot judge) | < 0.06 / < 0.025 |
 | `L1CRSHAR` | LA pixels on the trace also flagged in the partner, judged against the partner's own values | |
-| `L1CRDX1`, `L1CRDX2` | Offset of the partner along the dispersion per order (px) | < 0.6; COJ blue order unreliable (up to 3.4) |
+| `L1CRDX1`, `L1CRDX2` | Offset of the partner along the dispersion per order (px); absent where the spectrum has no features to correlate (normalised peak < 0.5, e.g. the blue order of Fairall 9) | < 0.6 |
 
 ## L1Q keywords
 

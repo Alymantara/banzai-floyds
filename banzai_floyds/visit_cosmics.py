@@ -310,12 +310,18 @@ def match_profile(a, a_err, model, model_err, usable, orders, a_offset, half_ker
     return matched, matched_err
 
 
-def dispersion_shift(a, model, usable, orders, a_offset, a_sigma, max_shift: int = 4) -> dict:
+def dispersion_shift(a, model, usable, orders, a_offset, a_sigma, max_shift: int = 4,
+                     min_correlation: float = 0.5) -> dict:
     """Offset along the dispersion of the partner model relative to the frame, per order: the peak of the cross
     correlation of their spectra summed over the trace (within 2 FWHM) after removing a 51-column running median,
     refined by a parabola through the three highest points. In a wide slit the position of the object across the
     slit shifts its spectrum: the two exposures of a visit differ by 0.1 px (median) at OGG and 0.3 px at COJ, up
-    to 0.6 and 1.2 px, which puts the flanks of a bright narrow line out of step."""
+    to 0.6 and 1.2 px, which puts the flanks of a bright narrow line out of step.
+
+    An order is left out when the normalised correlation at the peak is below `min_correlation`: a spectrum with no
+    features above the noise (the blue order of Fairall 9 at COJ, peak 0.1-0.3, against 0.9-1.0 in the red order
+    and in both orders of NGC 4151) has no offset to measure, and the peak of its correlation is wherever the noise
+    puts it (-3.4 to +2.2 px, the sign changing with the cosmic rays left in)."""
     shifts = {}
     lags = np.arange(-max_shift, max_shift + 1)
     for order_id in np.unique(orders[orders > 0]):
@@ -328,8 +334,9 @@ def dispersion_shift(a, model, usable, orders, a_offset, a_sigma, max_shift: int
         fm = fm - ndimage.median_filter(fm, 51, mode='nearest')
         inner = slice(max_shift + 1, fa.size - max_shift - 1)
         cc = np.array([np.sum(fa[inner] * np.roll(fm, -lag)[inner]) for lag in lags])
+        norm = np.sqrt(np.sum(fa[inner] ** 2) * np.sum(fm[inner] ** 2))
         best = int(np.argmax(cc))
-        if best in (0, lags.size - 1) or cc[best] <= 0:
+        if best in (0, lags.size - 1) or norm <= 0 or cc[best] < min_correlation * norm:
             continue
         curvature = cc[best - 1] - 2 * cc[best] + cc[best + 1]
         shifts[int(order_id)] = float(lags[best] + (0.5 * (cc[best - 1] - cc[best + 1]) / curvature
@@ -441,6 +448,18 @@ def _sky_subtracted(image):
     return np.where(image.orders.data > 0, image.data - background, 0.0)
 
 
+def order_end_band(orders: np.ndarray, buffer: int) -> np.ndarray:
+    """Pixels within `buffer` pixels of the ends of their order along the dispersion (the rows of the detector).
+    The signal stops sharply there, and the matched partner can miss the step by a pixel; the guard band of the
+    order edges (cosmics.order_edge_guard_band) covers the edges along the slit only."""
+    band = np.zeros(orders.shape, bool)
+    for order_id in np.unique(orders[orders > 0]):
+        in_order = orders == order_id
+        eroded = ndimage.binary_erosion(in_order, structure=np.ones((1, 2 * buffer + 1)), border_value=0)
+        band |= in_order & ~eroded
+    return band
+
+
 def compare_with_partner(image, partner, keep_z=3.0, seed_z=8.0, seed_rel=0.5, grow_z=3.0, max_new_pixels=30,
                          order_edge_buffer=2, add_edge_buffer=6, mismatch_box=5, mismatch_z=2.0,
                          shared_trace_fwhm=2.0):
@@ -500,7 +519,8 @@ def compare_with_partner(image, partner, keep_z=3.0, seed_z=8.0, seed_rel=0.5, g
     mismatch = ndimage.binary_dilation(np.abs(median_z) > mismatch_z, iterations=2) & in_order
     usable &= ~mismatch
     # the kernel along the slit is least reliable within its half-width of the edge of an order
-    can_add = ~order_edge_guard_band(image.orders, add_edge_buffer) & ~partner_flagged
+    can_add = ~order_edge_guard_band(image.orders, add_edge_buffer) & ~order_end_band(orders, add_edge_buffer) \
+        & ~partner_flagged
     snr = a / np.where(a_err > 0, a_err, np.inf)
     flags, counts = same_visit_flags(la_flags, z, rel, usable, keep_z, seed_z, seed_rel, grow_z, max_new_pixels,
                                      snr=snr, can_add=can_add)

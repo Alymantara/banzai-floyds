@@ -348,3 +348,45 @@ def test_peak_flagged_in_both_exposures_is_unflagged_on_the_trace_only():
     assert flags[45, 120]
     assert not flags[28:33, 297:304].any()
     assert counts['shared'] == int(peak.sum())
+
+
+def test_no_offset_from_a_featureless_spectrum():
+    """A faint spectrum with no features above the noise (the blue order of Fairall 9 at COJ) has no offset to
+    measure: none is returned, where the bare correlation peak would give one."""
+    from banzai_floyds.visit_cosmics import dispersion_shift
+    rng = np.random.default_rng(3)
+    ny, nx = 60, 400
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    orders = np.zeros((ny, nx), int)
+    orders[5:55] = 1
+    offset = np.where(orders > 0, yy - 30.0, np.nan)
+    sigma = np.where(orders > 0, 1.8, np.nan)
+    model = 40.0 * np.exp(-0.5 * ((yy - 30.0) / 1.8) ** 2) * (orders > 0)
+    err = np.sqrt(model + 100.0)
+    a = model + rng.normal(0, err)
+    b = model + rng.normal(0, err)
+    usable = orders > 0
+    assert dispersion_shift(a, b, usable, orders, offset, sigma) == {}
+    assert dispersion_shift(a, b, usable, orders, offset, sigma, min_correlation=-1.0) != {}
+
+
+def test_nothing_is_added_at_the_end_of_an_order():
+    """An excess right at the end of an order along the dispersion (where the signal stops sharply and the matched
+    partner can miss the step) is not added; the same excess in the middle of the order is."""
+    from banzai_floyds.visit_cosmics import compare_with_partner
+    rng = np.random.default_rng(8)
+    ny, nx = 60, 400
+    orders = np.zeros((ny, nx), int)
+    orders[5:55, 10:380] = 1
+    yy, xx = np.mgrid[0:ny, 0:nx]
+    model = 2000.0 * np.exp(-0.5 * ((yy - 30.0) / 1.8) ** 2) * (orders > 0)
+    err = np.sqrt(model + 100.0)
+    a = model + rng.normal(0, err)
+    b = model + rng.normal(0, err)
+    a[24:27, 378] += 3000.0    # at the end of the order
+    a[24:27, 200] += 3000.0    # in the middle
+    image = _fake_frame(a, err, np.zeros((ny, nx), np.uint8), orders, 30.0, 1.8)
+    partner = _fake_frame(b, err, np.zeros((ny, nx), np.uint8), orders, 30.0, 1.8)
+    flags, counts = compare_with_partner(image, partner)
+    assert flags[24:27, 200].all()
+    assert not flags[:, 370:].any()
