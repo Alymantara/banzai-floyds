@@ -16,8 +16,10 @@ from banzai_floyds.utils.binning_utils import bin_data
 from banzai_floyds.utils.fitting_utils import weighted_linear_fit
 from banzai_floyds.utils.order_utils import get_order_2d_region
 from banzai_floyds.utils.wavelength_utils import WavelengthSolution, tilt_coordinates, gauss_hermite_residuals
+from banzai_floyds.utils.wavelength_utils import gauss_hermite_jacobian
 from banzai_floyds.arc_lines import arc_lines_table
 from banzai_floyds.utils.fitting_utils import gauss, gauss_hermite, fwhm_to_sigma, sigma_to_fwhm, parameter_variances
+from banzai_floyds.utils.fitting_utils import gauss_hermite_derivatives
 from banzai_floyds.dbs import get_recent_lsf_params, add_lsf_params
 from banzai_floyds.extract import extract, horne_uncertainty
 from banzai_floyds.utils.profile_utils import normalize_profile
@@ -313,7 +315,10 @@ def _fit_feature_window(x, flux, error, untilted_x, fit_region, residuals, resid
         return None
     predicted_column = np.median(untilted_x[fit_region])
     guess, lower, upper = parameter_bounds(predicted_column, amplitude, background, *parameter_bounds_args)
-    return least_squares(residuals, guess, args=(window_x, flux, error) + residual_args,
+    # analytic derivatives where we have them: with finite differences the fitter evaluates the model once more per
+    # parameter at every step, which was half of the time of an arc reduction
+    jacobian = _ANALYTIC_JACOBIANS.get(residuals, '2-point')
+    return least_squares(residuals, guess, jac=jacobian, args=(window_x, flux, error) + residual_args,
                          bounds=(lower, upper), loss='huber', f_scale=huber_scale)
 
 
@@ -570,6 +575,20 @@ def _blend_residuals(params, x, flux, error, offsets, sigma, h3, h4):
     for amplitude, offset in zip(amplitudes, offsets):
         model = model + amplitude * gauss_hermite(x, center + offset, sigma, 1.0, h3, h4)
     return (model - flux) / error
+
+
+def _blend_jacobian(params, x, flux, error, offsets, sigma, h3, h4):
+    """Analytic Jacobian of `_blend_residuals` (columns: center, background, one amplitude per component)."""
+    center, amplitudes = params[0], params[2:]
+    columns = [np.zeros(len(x)), np.ones(len(x))]
+    for amplitude, offset in zip(amplitudes, offsets):
+        d = gauss_hermite_derivatives(x, center + offset, sigma, amplitude, h3, h4)
+        columns[0] = columns[0] + d['center']
+        columns.append(d['amplitude'])
+    return np.stack(columns, axis=1) / np.asarray(error, dtype=float)[:, None]
+
+
+_ANALYTIC_JACOBIANS = {_blend_residuals: _blend_jacobian, gauss_hermite_residuals: gauss_hermite_jacobian}
 
 
 def _group_lines_by_wavelength(wavelengths, threshold):

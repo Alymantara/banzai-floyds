@@ -5,7 +5,7 @@ from astropy.table import Table
 from numpy.polynomial.legendre import Legendre
 import numpy as np
 
-from banzai_floyds.utils.fitting_utils import gauss_hermite, sigma_to_fwhm
+from banzai_floyds.utils.fitting_utils import gauss_hermite, gauss_hermite_derivatives, sigma_to_fwhm
 
 
 class WavelengthSolution:
@@ -227,6 +227,15 @@ def gauss_hermite_residuals(params, x, flux, error):
     center, amplitude, background, sigma, h3, h4 = params
     model = amplitude * gauss_hermite(x, center, sigma, 1.0, h3, h4) + background
     return (model - flux) / error
+
+
+def gauss_hermite_jacobian(params, x, flux, error):
+    """Analytic Jacobian of `gauss_hermite_residuals` (rows: pixels; columns: center, amplitude, background,
+    sigma, h3, h4)."""
+    center, amplitude, background, sigma, h3, h4 = params
+    d = gauss_hermite_derivatives(x, center, sigma, amplitude, h3, h4)
+    jacobian = np.stack([d['center'], d['amplitude'], np.ones(len(x)), d['sigma'], d['h3'], d['h4']], axis=1)
+    return jacobian / np.asarray(error, dtype=float)[:, None]
 
 
 def bin_order_to_1d(data, uncertainty, mask, orders, order_id, tilt_angle):

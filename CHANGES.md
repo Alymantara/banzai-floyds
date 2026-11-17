@@ -46,6 +46,11 @@ Improved reduction for reverberation mapping (see docs/INSTALL_RM.md; all on by 
   offsets of up to 3.4 px), and no group is added within 6 px of the ends of an order along the dispersion.
 - Gaia lookup (isolated-star test for the profile wings) tries the VizieR mirrors in turn (CDS, then Harvard) before
   the ESA archive; with CDS down the standards were treated as non-stars.
+- Arc reduction 21-35 % faster (median 29 % on 12 random arcs at both sites): the line fits along the slit get
+  the derivatives of the Gauss-Hermite line model in closed form instead of finite differences, and the Hermite
+  polynomials are written out with their normalisation computed once (a factorial was recomputed 1.5 million times
+  per arc). Same lines used, same fit scatter; the wavelength solutions agree to 0.04 A (0.19 A at the extrapolated
+  end of one order).
 - Extraction: bins where cosmic-ray flags removed more than half of the profile weight are masked (EXTRACTED mask
   bit 4, column `cr_masked_weight`) instead of being scaled up from the rest of the bin, which made a clipped
   Halpha 2.6 times too bright.

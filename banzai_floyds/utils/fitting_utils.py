@@ -26,9 +26,41 @@ def gauss(x, mu, sigma):
     return 1 / np.sqrt(2.0 * np.pi) / sigma * np.exp(-0.5 * (x - mu) * (x - mu) / sigma / sigma)
 
 
+# sqrt(2^n n!) for the orders the line profiles use, computed once: the line fits of an arc evaluate these
+# polynomials over a million times, and recomputing the factorial each time took a quarter of the arc reduction
+_HERMITE_NORM = {3: np.sqrt(2.0 ** 3 * 6.0), 4: np.sqrt(2.0 ** 4 * 24.0)}
+
+
 def _normalized_hermite(n, w):
     """Hermite polynomial H_n in the orthonormal Gauss-Hermite normalization (van der Marel & Franx 1993)."""
+    if n == 3:
+        return (8.0 * w ** 3 - 12.0 * w) / _HERMITE_NORM[3]
+    if n == 4:
+        w2 = w * w
+        return (16.0 * w2 * w2 - 48.0 * w2 + 12.0) / _HERMITE_NORM[4]
     return eval_hermite(n, w) / np.sqrt(2.0 ** n * factorial(n))
+
+
+def _normalized_hermite_derivative(n, w):
+    """d/dw of `_normalized_hermite` for n = 3, 4."""
+    if n == 3:
+        return (24.0 * w * w - 12.0) / _HERMITE_NORM[3]
+    if n == 4:
+        return (64.0 * w ** 3 - 96.0 * w) / _HERMITE_NORM[4]
+    raise ValueError(f'no derivative for order {n}')
+
+
+def gauss_hermite_derivatives(x, center, sigma, amplitude, h3=0.0, h4=0.0):
+    """The Gauss-Hermite profile of `gauss_hermite` and its partial derivatives with respect to center, sigma,
+    amplitude, h3 and h4 (analytic, for the Jacobians of the line fits)."""
+    w = (np.asarray(x, dtype=float) - center) / sigma
+    g = np.exp(-0.5 * w * w)
+    H3, H4 = _normalized_hermite(3, w), _normalized_hermite(4, w)
+    poly = 1.0 + h3 * H3 + h4 * H4
+    dpoly = h3 * _normalized_hermite_derivative(3, w) + h4 * _normalized_hermite_derivative(4, w)
+    d_dw = amplitude * g * (dpoly - w * poly)
+    return {'model': amplitude * g * poly, 'center': -d_dw / sigma, 'sigma': -d_dw * w / sigma,
+            'amplitude': g * poly, 'h3': amplitude * g * H3, 'h4': amplitude * g * H4}
 
 
 def gauss_hermite(x, center, sigma, amplitude, h3=0.0, h4=0.0):
