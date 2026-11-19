@@ -50,3 +50,19 @@ Calibration Source:
 
 FEIGE67 and GD153 positions are the LCO catalogue positions (CAT-RA/CAT-DEC of the FLOYDS frames); GD153 is ~5" from
 its J2000 position because of its proper motion.
+
+Added 19 Nov 2026 (AVA, so that the standards most often paired with AGN spectra can be used: GD 71, HZ 44,
+Feige 66, CD-32 9927 and G191-B2B pair with about 40 % of the AVA FLOYDS science spectra). Positions are the LCO
+catalogue positions (CAT-RA/CAT-DEC of a FLOYDS frame of each star); the source is in the header keyword SOURCE.
+
+| Object | Source |
+| ------ | ------ |
+| GD71 | ftp://ftp.eso.org/pub/stecf/standards/Xshooter/fGD71.dat (X-shooter convention, flux x 1) |
+| HZ44 | ftp://ftp.eso.org/pub/stecf/standards/hststan/fhz44.dat (flux x 1e-16) |
+| G191-B2B | ftp://ftp.eso.org/pub/stecf/standards/hststan/fg191b2b.dat (flux x 1e-16) |
+| FEIGE66 | ftp://ftp.eso.org/pub/stecf/standards/okestan/ffeige66.dat (Oke 1990, 3200-9200 A; flux x 1e-16; extended to 11000 A with a power law fitted to 7500-9200 A, header EXTRAP/EXTRAPSL) |
+| CD-32 9927 | ftp://ftp.eso.org/pub/stecf/standards/ctiostan/fcd32d9927.dat (Hamuy 1994, 50 A bins, 3300-10200 A; flux x 1e-16; extended to 11000 A the same way) |
+
+Not added: L745-46A (no fluxed spectrum at ESO), EG21 (only the low-resolution Hamuy spectrum; see above),
+LTT 3218 / LTT 7987 (the FLOYDS frames have no catalogue position and LTT 3218 moves about 1"/yr).
+

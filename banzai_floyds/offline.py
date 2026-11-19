@@ -229,7 +229,7 @@ def _windows(db_address, days=60):
 
 
 def chain(raw_dir, db_address, processed_dir, workers=4, window_days=60):
-    from banzai_floyds.fringe_masters import make_phase_masters, make_residual_templates
+    from banzai_floyds.fringe_masters import keep_template_free, make_phase_masters, make_residual_templates
     groups = classify(raw_dir, db_address)
     print({kind: len(paths) for kind, paths in groups.items()}, flush=True)
     run(groups['arcs'], db_address, processed_dir, workers)
@@ -239,6 +239,7 @@ def chain(raw_dir, db_address, processed_dir, workers=4, window_days=60):
             print('phase master', path, flush=True)
     make_residual_templates(db_address, strip=True)
     run(groups['standards'], db_address, processed_dir, workers)
+    print('template-free standards kept', keep_template_free(db_address), flush=True)
     print('residual templates', make_residual_templates(db_address), flush=True)
     run(groups['standards'], db_address, processed_dir, workers)
     return run(groups['science'], db_address, processed_dir, workers)

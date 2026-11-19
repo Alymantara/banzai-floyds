@@ -18,6 +18,7 @@ import argparse
 import datetime
 import json
 import os
+import shutil
 
 import numpy as np
 from astropy.coordinates import SkyCoord
@@ -133,28 +134,69 @@ def _standard_frame(one_d, two_d):
     return wavelength, x, np.asarray(extracted['fluxraw_optimal'], float) / model, header
 
 
+#: suffix of the template-free copy of a standard's -1d / -2d (kept from pass 1, see ``keep_template_free``)
+TEMPLATE_FREE_TAG = '-notpl'
+
+
+def template_free_paths(one_d):
+    """(-1d, -2d) paths of the template-free copy of a processed standard's -1d path."""
+    return (one_d.replace('-1d.fits', f'-1d{TEMPLATE_FREE_TAG}.fits'),
+            one_d.replace('-1d.fits', f'-2d{TEMPLATE_FREE_TAG}.fits'))
+
+
+def _standards(db_address):
+    with get_session(db_address=db_address) as session:
+        rows = session.query(FLOYDSCalibrationImage).filter(FLOYDSCalibrationImage.type == 'STANDARD').all()
+        return [(s.filename, s.filepath, s.dateobs, s.instrument_id) for s in rows]
+
+
+def keep_template_free(db_address):
+    """Copy the -1d / -2d of every processed standard that was reduced WITHOUT a residual template (pass 1) to
+    ``*-1d-notpl`` / ``*-2d-notpl``. Pass 2 overwrites the products with template-corrected ones, so without these
+    copies a later run could not rebuild the templates from the standards of earlier runs (AVA B20). Returns the
+    number of standards copied."""
+    n = 0
+    for name, path, _, _ in _standards(db_address):
+        one_d = os.path.join(path, name)
+        two_d = one_d.replace('-1d.fits', '-2d.fits')
+        if not (os.path.exists(one_d) and os.path.exists(two_d)):
+            continue
+        if fits.getheader(two_d, 'SCI').get('L1FRGTPL'):
+            continue
+        for src, dst in zip((one_d, two_d), template_free_paths(one_d)):
+            shutil.copy2(src, dst)
+        n += 1
+    return n
+
+
 def make_residual_templates(db_address, strip=False):
     """Write (or, with ``strip``, remove) the FRINGE_RESIDUAL extension of every phase master. Each processed
-    standard is assigned to the phase master of its slit width nearest in time. Standards must come from a pass
-    without a template (header L1FRGTPL false)."""
+    standard is assigned to the phase master of its slit width nearest in time. Only template-free reductions are
+    used: the ``-notpl`` copy kept from pass 1 (``keep_template_free``) when it exists, else the products themselves
+    if they were made without a template; a standard with neither (template-corrected, from before the copies were
+    kept) is skipped with a message instead of stopping the run."""
     with get_session(db_address=db_address) as session:
         masters = session.query(FLOYDSCalibrationImage).filter(
             FLOYDSCalibrationImage.type == 'LAMPFLAT', FLOYDSCalibrationImage.is_master.is_(True),
             FLOYDSCalibrationImage.filename.like(f'%{PHASE_MASTER_TAG}%')).all()
-        standards = session.query(FLOYDSCalibrationImage).filter(FLOYDSCalibrationImage.type == 'STANDARD').all()
         masters = [(m.filename, m.filepath, m.dateobs, m.instrument_id, _slit(m)) for m in masters]
-        standards = [(s.filename, s.filepath, s.dateobs, s.instrument_id) for s in standards]
+    standards = _standards(db_address)
     report = {}
     groups = {m[0]: [] for m in masters}
     if not strip:
         for name, path, dateobs, instrument in standards:
             one_d = os.path.join(path, name)
             two_d = one_d.replace('-1d.fits', '-2d.fits')
-            if not os.path.exists(two_d):
+            free_1d, free_2d = template_free_paths(one_d)
+            if os.path.exists(free_1d) and os.path.exists(free_2d):
+                one_d, two_d = free_1d, free_2d
+            elif not os.path.exists(two_d):
                 continue
             header = fits.getheader(two_d, 'SCI')
             if header.get('L1FRGTPL'):
-                raise ValueError(f'{name} was processed with a residual template: use a pass without it')
+                print(f'residual templates: {name} skipped (only a template-corrected reduction, no '
+                      f'{TEMPLATE_FREE_TAG} copy)', flush=True)
+                continue
             slit = float(header.get('APERWID', np.nan))
             candidates = [m for m in masters if m[3] == instrument and m[4] == slit]
             if candidates:
