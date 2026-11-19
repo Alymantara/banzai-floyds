@@ -558,3 +558,24 @@ def test_fit_feature_tilts_skips_lines_with_too_few_rows():
     }
     line_tilts = fit_feature_tilts(centroids, min_rows=3)
     assert list(line_tilts['reference_wavelength']) == [6000.0]
+
+
+def test_fit_wavelength_solution_rejects_a_misidentified_line():
+    # A line matched to a feature 12 A away (as the Ar 6753/6767 blend in 2 arcsec arcs) with a small centroid
+    # error is left out, so the solution stays where the other lines put it
+    rng = np.random.default_rng(3)
+    domain = (0.0, 1700.0)
+    true_wavelength = Legendre([7000.0, 2900.0, 40.0, -15.0], domain=domain)
+    x_grid = np.linspace(*domain, 2000)
+    catalog = np.linspace(5500.0, 9700.0, 22)
+    centroids = np.interp(catalog, true_wavelength(x_grid), x_grid) + rng.normal(0.0, 0.03, catalog.size)
+    errors = np.full(catalog.size, 0.03)
+    wrong = centroids.copy()
+    wrong[8] += 12.0 / 3.4
+    clean = fit_wavelength_solution(centroids, catalog, errors, domain=domain, dispersion_guess=3.4, degree=5)
+    clipped = fit_wavelength_solution(wrong, catalog, errors, domain=domain, dispersion_guess=3.4, degree=5)
+    unclipped = fit_wavelength_solution(wrong, catalog, errors, domain=domain, dispersion_guess=3.4, degree=5,
+                                        clip_sigma=np.inf)
+    x = np.linspace(centroids.min(), centroids.max(), 300)  # where the lines are; beyond them it extrapolates
+    assert np.max(np.abs(clipped(x) - clean(x))) < 0.05
+    assert np.max(np.abs(unclipped(x) - clean(x))) > 0.3

@@ -930,7 +930,7 @@ def _invert_wavelength_polynomial(x_of_wavelength, domain, dispersion_guess, deg
 
 
 def fit_wavelength_solution(centroids, wavelengths, centroid_errors, domain, dispersion_guess,
-                            degree=5):
+                            degree=5, clip_sigma=5.0, min_clip=3.0, max_iterations=3):
     """
     Fit the wavelength solution from the per-line centroids.
 
@@ -971,9 +971,26 @@ def fit_wavelength_solution(centroids, wavelengths, centroid_errors, domain, dis
     wavelengths = np.asarray(wavelengths, dtype=float)
     weights = 1.0 / np.asarray(centroid_errors, dtype=float)
 
-    wavelength_domain = (np.min(wavelengths), np.max(wavelengths))
-    x_of_wavelength = Legendre.fit(wavelengths, centroids, degree, domain=wavelength_domain, w=weights)
-    return _invert_wavelength_polynomial(x_of_wavelength, domain, dispersion_guess, degree)
+    # A line matched to the wrong feature has a small centroid error and pulls the solution: in the COJ and OGG
+    # arcs of 2024-26 the Ar 6753/6767 blend of the 2 arcsec arcs lands up to 14 A away and the faint Ar 6416 up
+    # to 7 A, moving the red solution by up to 0.7 A. Lines further than `clip_sigma` robust standard deviations,
+    # and at least `min_clip` A, from the solution are left out and the solution is fitted again, keeping at least
+    # degree + 3 lines. The floor of 3 A leaves alone the 8052 A blend of the 6 arcsec arcs, which is offset by a
+    # consistent 1-2 A (its blend wavelength does not suit the wide slit) and would otherwise be dropped in some arcs
+    # and kept in others.
+    use = np.ones(centroids.size, bool)
+    for _ in range(max_iterations + 1):
+        wavelength_domain = (np.min(wavelengths[use]), np.max(wavelengths[use]))
+        x_of_wavelength = Legendre.fit(wavelengths[use], centroids[use], degree, domain=wavelength_domain,
+                                       w=weights[use])
+        solution = _invert_wavelength_polynomial(x_of_wavelength, domain, dispersion_guess, degree)
+        residuals = solution(centroids) - wavelengths
+        spread = 1.4826 * np.median(np.abs(residuals[use] - np.median(residuals[use])))
+        keep = np.abs(residuals) <= max(clip_sigma * spread, min_clip)
+        if np.array_equal(keep, use) or keep.sum() < degree + 3:
+            break
+        use = keep
+    return solution
 
 
 def get_initial_lsf(image, order, db_address):

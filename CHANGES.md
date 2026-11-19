@@ -60,6 +60,13 @@ Improved reduction for reverberation mapping (see docs/INSTALL_RM.md; all on by 
 - New commands: `banzai_floyds_offline` (local database, sky flats, offline reduction in the right order),
   `banzai_floyds_make_phase_master`, `banzai_floyds_make_residual_template`, `banzai_floyds_correct_wavelengths`.
 - Diagnostics and archive-product tools in `banzai_floyds.diagnostics` (re-extraction, flux recalibration, QA).
+- Wavelength fit rejects misidentified arc lines: up to 3 refits clipping lines more than 5 robust standard
+  deviations (at least 3 A) from the solution. Ar 6753/6767 (blended) and Ar 6416 were occasionally matched to the
+  wrong peak in 2" arcs, up to 14 A off, and pulled the solution by up to 0.7 A; 46 of 258 arcs change.
+- `offline.chain(..., timings={})` records the time of each step and of each frame; `offline.db_is_set_up`.
+- Quick start: `docs/QUICKSTART.md` and `notebooks/quickstart_reduction.ipynb` (reduce a raw folder, then show the
+  spectra, arc residuals, standard-to-standard flux accuracy, S/N, timing and how the standards enter the science
+  spectra), with the checks in `banzai_floyds.diagnostics.quicklook`.
 - Test data are now packaged.
 
 1.1.0 (2026-06-03)

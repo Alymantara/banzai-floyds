@@ -52,6 +52,18 @@ def setup_db(db_address):
     print('sky flats registered:', dbs.ingest_skyflats(db_address))
 
 
+def db_is_set_up(db_address):
+    """True if the database exists and setup_db has filled it (an empty file, left by a crashed run, is not)."""
+    from sqlalchemy import create_engine, inspect
+    if db_address.startswith('sqlite:///') and not os.path.exists(db_address[len('sqlite:///'):]):
+        return False
+    engine = create_engine(db_address)
+    try:
+        return {'fluxstandards', 'sites'} <= set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
 def _context_for(db_address, processed_dir):
     from banzai_floyds import settings
     import banzai.main
@@ -204,12 +216,16 @@ def classify(raw_dir, db_address):
     return {kind: [p for _, p in sorted(items)] for kind, items in groups.items()}
 
 
-def run(paths, db_address, processed_dir, workers=4):
+def run(paths, db_address, processed_dir, workers=4, record=None):
+    """Reduce `paths` with `workers` processes; return the number of failures. With `record` (a list), append
+    (file, status, seconds) for every frame."""
     failures = 0
     with Pool(workers, initializer=_init, initargs=(db_address, processed_dir)) as pool:
         for path, status, seconds in pool.imap_unordered(_process, paths):
             print(f'{os.path.basename(path)} {status} {seconds:.0f}s', flush=True)
             failures += status != 'ok'
+            if record is not None:
+                record.append((os.path.basename(path), status, float(seconds)))
     return failures
 
 
@@ -228,21 +244,42 @@ def _windows(db_address, days=60):
     return [(edges[i].isoformat(), edges[i + 1].isoformat()) for i in range(n)]
 
 
-def chain(raw_dir, db_address, processed_dir, workers=4, window_days=60):
+def chain(raw_dir, db_address, processed_dir, workers=4, window_days=60, timings=None):
+    """Reduce everything in `raw_dir` in the order the improved pipeline needs; return the number of science
+    frames that failed. With `timings` (a dict), record the wall-clock seconds and frame count of each step in
+    timings['steps'] and the time of every frame in timings['frames'] (step, file, status, seconds)."""
     from banzai_floyds.fringe_masters import keep_template_free, make_phase_masters, make_residual_templates
+    steps, frames = [], []
+    if timings is not None:
+        timings['steps'], timings['frames'] = steps, frames
+
+    def timed(name, paths=None, function=None):
+        start, record = time.time(), []
+        result = run(paths, db_address, processed_dir, workers, record) if paths is not None else function()
+        steps.append({'step': name, 'frames': len(paths) if paths is not None else 0,
+                      'seconds': time.time() - start})
+        frames.extend({'step': name, 'file': f, 'status': st, 'seconds': sec} for f, st, sec in record)
+        return result
+
     groups = classify(raw_dir, db_address)
     print({kind: len(paths) for kind, paths in groups.items()}, flush=True)
-    run(groups['arcs'], db_address, processed_dir, workers)
-    run(groups['flats'], db_address, processed_dir, workers)
-    for low, high in _windows(db_address, window_days):
-        for path in make_phase_masters(db_address, processed_dir, low, high):
-            print('phase master', path, flush=True)
-    make_residual_templates(db_address, strip=True)
-    run(groups['standards'], db_address, processed_dir, workers)
-    print('template-free standards kept', keep_template_free(db_address), flush=True)
-    print('residual templates', make_residual_templates(db_address), flush=True)
-    run(groups['standards'], db_address, processed_dir, workers)
-    return run(groups['science'], db_address, processed_dir, workers)
+    timed('arcs', groups['arcs'])
+    timed('lamp flats', groups['flats'])
+
+    def phase_masters():
+        for low, high in _windows(db_address, window_days):
+            for path in make_phase_masters(db_address, processed_dir, low, high):
+                print('phase master', path, flush=True)
+        make_residual_templates(db_address, strip=True)
+    timed('fringe phase masters', function=phase_masters)
+    timed('standards, first pass', groups['standards'])
+
+    def templates():
+        print('template-free standards kept', keep_template_free(db_address), flush=True)
+        print('residual templates', make_residual_templates(db_address), flush=True)
+    timed('residual fringe templates', function=templates)
+    timed('standards, second pass', groups['standards'])
+    return timed('science', groups['science'])
 
 
 def main(argv=None):
