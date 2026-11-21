@@ -450,10 +450,11 @@ class FLOYDSFrameFactory(LCOFrameFactory):
 
     @staticmethod
     def _name_unnamed_ccd_hdus(frame):
-        """Older raw files (2014-2016) have no EXTNAME on the image extension, so its data had no name and writing
-        the product failed on the BPM extension name (AVA B50). Name it SCI, as in the newer raw files."""
+        """Older raw files (2014-2018) name the image extension differently: no EXTNAME (2014-2015, 2017-2018) or
+        RAW (2016). The product then had no SCI extension, or writing it failed on the BPM extension name (AVA B50,
+        B60). Name it SCI, as in the newer raw files."""
         for hdu in frame.ccd_hdus:
-            if not hdu.name:
+            if not hdu.name or str(hdu.name).upper() in ('RAW', 'COMPRESSED_IMAGE'):
                 hdu.name = 'SCI'
                 hdu.meta['EXTNAME'] = 'SCI'
 

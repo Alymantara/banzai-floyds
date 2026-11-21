@@ -50,6 +50,8 @@ def test_unnamed_image_extension_becomes_sci():
     from banzai_floyds.frames import FLOYDSFrameFactory
 
     old = SimpleNamespace(name=None, meta=fits.Header())
+    raw2016 = SimpleNamespace(name='RAW', meta=fits.Header({'EXTNAME': 'RAW'}))
     new = SimpleNamespace(name='SCI', meta=fits.Header({'EXTNAME': 'SCI'}))
-    FLOYDSFrameFactory._name_unnamed_ccd_hdus(SimpleNamespace(ccd_hdus=[old, new]))
+    FLOYDSFrameFactory._name_unnamed_ccd_hdus(SimpleNamespace(ccd_hdus=[old, raw2016, new]))
     assert old.name == 'SCI' and old.meta['EXTNAME'] == 'SCI' and new.name == 'SCI'
+    assert raw2016.name == 'SCI' and raw2016.meta['EXTNAME'] == 'SCI'          # 2016 raw files (AVA B60)

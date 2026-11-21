@@ -523,4 +523,9 @@ def orders_from_fits(orders_data, orders_meta, data_shape, y_order_shift=0):
     domains = [(row['domainmin'], row['domainmax']) for row in orders_data]
     models = [np.polynomial.legendre.Legendre(coeff_set, domain=domain)
               for coeff_set, domain in zip(coeffs, domains)]
-    return Orders(models, data_shape, [orders_meta['ORDHGHT'] for _ in models])
+    # per-order heights when the table has them (equal to ORDHGHT in every sky-flat solution; smaller for an en05
+    # blue order that sits near the top of the detector, AVA B60)
+    names = getattr(getattr(orders_data, 'dtype', None), 'names', None) or getattr(orders_data, 'colnames', [])
+    heights = ([int(row['height']) for row in orders_data] if 'height' in names
+               else [orders_meta['ORDHGHT'] for _ in models])
+    return Orders(models, data_shape, heights)

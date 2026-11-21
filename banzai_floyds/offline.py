@@ -50,6 +50,9 @@ def setup_db(db_address):
     dbs.ingest_standards(db_address)
     # the order solutions of all the sky flats in data/orders/skyflats.dat ship with the package
     print('sky flats registered:', dbs.ingest_skyflats(db_address))
+    # COJ en05 (until 2019): no sky flats exist; hybrid order solutions (banzai_floyds.en05, AVA B60)
+    from banzai_floyds.en05 import register_en05
+    print('en05 hybrid order solutions registered:', register_en05(db_address))
 
 
 def db_is_set_up(db_address):
@@ -299,7 +302,8 @@ def chain(raw_dir, db_address, processed_dir, workers=4, window_days=60, timings
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('command', choices=['setup-db', 'fetch-skyflats', 'skyflats', 'run', 'chain'])
+    parser.add_argument('command', choices=['setup-db', 'fetch-skyflats', 'skyflats', 'run', 'chain', 'register-en05',
+                                            'en05-orders'])
     parser.add_argument('--db-address', help='e.g. sqlite:///floyds.db (all commands but fetch-skyflats)')
     parser.add_argument('--site', choices=sorted(SITES), help='for fetch-skyflats: one site only')
     parser.add_argument('--raw-dir')
@@ -307,6 +311,9 @@ def main(argv=None):
     parser.add_argument('--kind', choices=KINDS, help='for run: which frames')
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--window-days', type=float, default=60.0, help='for chain: phase-master window')
+    parser.add_argument('--reference', help='for en05-orders: the en12 order solution (-f91) of the same slit width')
+    parser.add_argument('--out-dir', help='for en05-orders: where to write the hybrid solutions')
+    parser.add_argument('lamp_flats', nargs='*', help='for en05-orders: raw en05 lamp flats (-w00)')
     args = parser.parse_args(argv)
     if args.command == 'fetch-skyflats':
         print('sky flats fetched:', fetch_skyflats(args.raw_dir or 'skyflats', args.site))
@@ -315,6 +322,16 @@ def main(argv=None):
         parser.error('--db-address is required')
     if args.command == 'setup-db':
         setup_db(args.db_address)
+    elif args.command == 'register-en05':
+        from banzai_floyds.en05 import register_en05
+        print('en05 registered; hybrid order solutions:', register_en05(args.db_address))
+    elif args.command == 'en05-orders':
+        from banzai_floyds.en05 import build_hybrid, register_en05
+        register_en05(args.db_address, solutions=[])
+        for lamp in args.lamp_flats:
+            out, shift = build_hybrid(lamp, args.reference, args.db_address, args.processed_dir, args.out_dir)
+            register_en05(args.db_address, solutions=[out])
+            print(f'{out}: order 2 shifted {shift:+.2f} px', flush=True)
     elif args.command == 'skyflats':
         process_skyflats(args.db_address, args.raw_dir, args.processed_dir)
     elif args.command == 'run':
