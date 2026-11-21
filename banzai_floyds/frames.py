@@ -437,10 +437,35 @@ class FLOYDSStandardFrame(FLOYDSCalibrationFrame):
             return None
 
 
+#: saturation used when a raw FLOYDS header has SATURATE = 0 or none (2014-2016 en05/en06 data, AVA B50); the value
+#: the en05/en06 headers carry from 2017 on, and the one ``open`` already forces for en12
+FLOYDS_DEFAULT_SATURATE = 59000.0
+FLOYDS_DEFAULT_MAXLIN = 56000.0
+
+
 class FLOYDSFrameFactory(LCOFrameFactory):
     @property
     def observation_frame_class(self):
         return FLOYDSObservationFrame
+
+    @staticmethod
+    def _name_unnamed_ccd_hdus(frame):
+        """Older raw files (2014-2016) have no EXTNAME on the image extension, so its data had no name and writing
+        the product failed on the BPM extension name (AVA B50). Name it SCI, as in the newer raw files."""
+        for hdu in frame.ccd_hdus:
+            if not hdu.name:
+                hdu.name = 'SCI'
+                hdu.meta['EXTNAME'] = 'SCI'
+
+    @staticmethod
+    def _init_saturate(image):
+        """Older FLOYDS raw frames have SATURATE = 0, and banzai has no default for FLOYDS, so it raised
+        MissingSaturate and the frame was never reduced. Use the later headers' value instead."""
+        for hdu in image.ccd_hdus:
+            if not hdu.meta.get('SATURATE') and not image.meta.get('SATURATE'):
+                hdu.meta['SATURATE'] = (FLOYDS_DEFAULT_SATURATE, '[ADU] Saturation level used (FLOYDS default)')
+                hdu.meta['MAXLIN'] = (FLOYDS_DEFAULT_MAXLIN, '[ADU] Non-linearity level (FLOYDS default)')
+        LCOFrameFactory._init_saturate(image)
 
     @property
     def calibration_frame_class(self):
@@ -454,6 +479,7 @@ class FLOYDSFrameFactory(LCOFrameFactory):
         frame = super(FLOYDSFrameFactory, self).open(file_info, runtime_context)
         if frame is None:
             return None
+        self._name_unnamed_ccd_hdus(frame)
         # Munge the SATURATE keyword in en12 because it's been wrong for years
         if frame.instrument.camera == 'en12':
             for hdu in frame.ccd_hdus:

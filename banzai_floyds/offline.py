@@ -190,6 +190,21 @@ def process_skyflats(db_address, raw_dir, processed_dir):
     print('sky-flat windows bounded:', bound_skyflats_to_windows(db_address))
 
 
+def raw_header(path):
+    """The header that describes a raw frame: the ``SCI`` extension when there is one, else the first HDU with an
+    ``OBSTYPE``. Raw files whose compressed image extension is not named ``SCI`` (older FLOYDS data) have an empty
+    primary header, so reading the primary alone classified every frame as nothing (AVA B50)."""
+    from astropy.io import fits
+    with fits.open(path) as hdul:
+        names = [h.name for h in hdul]
+        if 'SCI' in names:
+            return hdul['SCI'].header.copy()
+        for hdu in hdul:
+            if 'OBSTYPE' in hdu.header:
+                return hdu.header.copy()
+        return hdul[0].header.copy()
+
+
 def classify(raw_dir, db_address):
     """{kind: [paths sorted by DATE-OBS]} from the headers of the raw frames."""
     from astropy.io import fits
@@ -198,7 +213,7 @@ def classify(raw_dir, db_address):
     from banzai_floyds.dbs import find_flux_standard
     groups = {kind: [] for kind in KINDS}
     for path in sorted(glob.glob(os.path.join(raw_dir, '*.fits*'))):
-        header = fits.getheader(path, 'SCI') if 'SCI' in [h.name for h in fits.open(path)] else fits.getheader(path)
+        header = raw_header(path)
         obstype = header.get('OBSTYPE', '')
         if obstype == 'ARC':
             kind = 'arcs'
