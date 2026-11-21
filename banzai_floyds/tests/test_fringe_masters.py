@@ -33,3 +33,20 @@ def test_residual_template_needs_three_frames():
     rng = np.random.default_rng(4)
     frames = [_frame(0.0, lambda x: 0 * x, rng) for _ in range(2)]
     assert residual_template(frames, np.arange(0.0, 2100.0, 0.5)) is None
+
+
+def test_unreadable_standard_is_skipped_not_fatal(monkeypatch, capsys):
+    """AVA B52: a standard -2d without BINNED2D (or TRACE) must not stop the residual-template build."""
+    from banzai_floyds import fringe_masters
+
+    def fake(one_d, two_d):
+        if 'slim' in one_d:
+            raise KeyError("Extension 'BINNED2D' not found.")
+        return np.arange(3.0), np.arange(3.0), np.ones(3), {}
+
+    monkeypatch.setattr(fringe_masters, '_standard_frame', fake)
+    frames = fringe_masters._template_frames([('/a/ok-1d.fits', '/a/ok-2d.fits'),
+                                              ('/a/slim-1d.fits', '/a/slim-2d.fits'),
+                                              ('/a/ok2-1d.fits', '/a/ok2-2d.fits')])
+    assert len(frames) == 2 and all(len(f) == 3 for f in frames)
+    assert 'slim-1d.fits skipped' in capsys.readouterr().out

@@ -169,6 +169,19 @@ def keep_template_free(db_address):
     return n
 
 
+def _template_frames(pairs):
+    """``_standard_frame(...)[:3]`` of each (-1d, -2d) pair. A standard whose files cannot be read as a template input
+    (e.g. a -2d slimmed by AVA without BINNED2D or TRACE, AVA B52) is skipped with a message instead of stopping the
+    whole chain run before any science is extracted."""
+    frames = []
+    for one_d, two_d in pairs:
+        try:
+            frames.append(_standard_frame(one_d, two_d)[:3])
+        except KeyError as error:
+            print(f'residual templates: {os.path.basename(one_d)} skipped ({error})', flush=True)
+    return frames
+
+
 def make_residual_templates(db_address, strip=False):
     """Write (or, with ``strip``, remove) the FRINGE_RESIDUAL extension of every phase master. Each processed
     standard is assigned to the phase master of its slit width nearest in time. Only template-free reductions are
@@ -203,7 +216,7 @@ def make_residual_templates(db_address, strip=False):
                 nearest = min(candidates, key=lambda m: abs((m[2] - dateobs).total_seconds()))
                 groups[nearest[0]].append((one_d, two_d))
     for name, path, _, _, _ in masters:
-        frames = [] if strip else [_standard_frame(one_d, two_d)[:3] for one_d, two_d in groups[name]]
+        frames = [] if strip else _template_frames(groups[name])
         template = None if strip else residual_template(frames, X_GRID)
         full = os.path.join(path, name)
         with fits.open(full) as hdul:
