@@ -835,3 +835,24 @@ def test_fit_fringe_continuum():
         np.testing.assert_allclose(actual[np.logical_not(redward)], expected[np.logical_not(redward)],
                                    rtol=0.10)
         np.testing.assert_allclose(actual[redward], expected[redward], rtol=0.15)
+
+
+def test_get_cal_record_accepts_the_filler_twin_proposal():
+    """AVA mock daily ingest (24 Nov 2026): the only arc within days of a KEY2026B-007 science frame was taken under
+    the filler KEY2026B-007f and is still proprietary; same programme, so it must be found."""
+    from banzai_floyds.dbs import get_cal_record, proposal_twins
+    assert proposal_twins('KEY2026B-007') == ['KEY2026B-007', 'KEY2026B-007f']
+    assert proposal_twins('KEY2026B-007f') == ['KEY2026B-007f', 'KEY2026B-007']
+    future = datetime(2027, 11, 11)
+    db_address = seed_lampflat_database([
+        {'filename': 'filler_arc.fits', 'type': 'ARC', 'instrument_id': 1, 'is_master': True, 'is_bad': False,
+         'blockid': 7, 'proposal': 'KEY2026B-007f', 'public_date': future, 'dateobs': datetime(2026, 11, 11),
+         'good_after': datetime(1000, 1, 1), 'good_until': datetime(3000, 1, 1)},
+        {'filename': 'other_programme_arc.fits', 'type': 'ARC', 'instrument_id': 1, 'is_master': True,
+         'is_bad': False, 'blockid': 8, 'proposal': 'LCO2026B-001', 'public_date': future,
+         'dateobs': datetime(2026, 11, 14), 'good_after': datetime(1000, 1, 1), 'good_until': datetime(3000, 1, 1)},
+    ])
+    science = SimpleNamespace(blockid=42, instrument=SimpleNamespace(id=1), slit_width=2.0, proposal='KEY2026B-007',
+                              dateobs=datetime(2026, 11, 15))
+    record = get_cal_record(science, 'ARC', ['slit_width'], db_address)
+    assert record is not None and record.filename == 'filler_arc.fits'     # not another programme's proprietary arc

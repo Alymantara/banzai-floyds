@@ -384,6 +384,15 @@ def get_order_height(instrument, dateobs, slit_width, db_address):
         return order_height.height
 
 
+def proposal_twins(proposal) -> list:
+    """``proposal`` and its filler twin: LCO filler proposals are the main proposal's ID with an ``f`` appended."""
+    if not proposal:
+        return [proposal]
+    proposal = str(proposal)
+    twin = proposal[:-1] if proposal.endswith('f') else proposal + 'f'
+    return [proposal, twin]
+
+
 def get_cal_record(image: FLOYDSCalibrationImage, calibration_type: str, selection_criteria: list, db_address: str):
     """Search for the best calibration frame to use
 
@@ -431,8 +440,11 @@ def get_cal_record(image: FLOYDSCalibrationImage, calibration_type: str, selecti
         image_filter = db_session.query(FLOYDSCalibrationImage).filter(calibration_criteria & block_criteria)
         calibration_image = image_filter.order_by(order_func).first()
         if calibration_image is None:
-            # Try to find cals in the same proposal
-            proposal_criteria = FLOYDSCalibrationImage.proposal == image.proposal
+            # Try to find cals in the same proposal. A proposal and its filler twin (<ID> / <ID>f, e.g. KEY2026B-007
+            # and KEY2026B-007f) are the same programme: an arc taken under the filler serves the main proposal's
+            # science and the other way round (AVA mock daily ingest, 24 Nov 2026: Fairall 9 on 2026-11-15 had only a
+            # filler-proposal arc within days, still proprietary, so no arc was found at all).
+            proposal_criteria = FLOYDSCalibrationImage.proposal.in_(proposal_twins(image.proposal))
             image_filter = db_session.query(FLOYDSCalibrationImage).filter(calibration_criteria & proposal_criteria)
             calibration_image = image_filter.order_by(order_func).first()
         if calibration_image is None:

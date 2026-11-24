@@ -55,3 +55,36 @@ def test_unnamed_image_extension_becomes_sci():
     FLOYDSFrameFactory._name_unnamed_ccd_hdus(SimpleNamespace(ccd_hdus=[old, raw2016, new]))
     assert old.name == 'SCI' and old.meta['EXTNAME'] == 'SCI' and new.name == 'SCI'
     assert raw2016.name == 'SCI' and raw2016.meta['EXTNAME'] == 'SCI'          # 2016 raw files (AVA B60)
+
+
+def _spectrum(path, **keys):
+    header = fits.Header({'OBSTYPE': 'SPECTRUM', 'DATE-OBS': '2019-06-04T06:00:00', **keys})
+    hdu = fits.CompImageHDU(np.zeros((8, 8), np.float32), header=header, name='SCI')
+    fits.HDUList([fits.PrimaryHDU(), hdu]).writeto(path)
+
+
+def test_frame_position_treats_na_as_missing():
+    """AVA (24 Nov 2026): RA = 'N/A' in a raw header raised in SkyCoord and stopped the whole chain."""
+    assert offline.frame_position(fits.Header({'RA': 'N/A', 'DEC': 'N/A'})) is None
+    assert offline.frame_position(fits.Header({'CAT-RA': 'N/A', 'CAT-DEC': 'N/A', 'RA': '', 'DEC': ''})) is None
+    assert offline.frame_position(fits.Header({'RA': 'garbage', 'DEC': '+10:00:00'})) is None
+    assert offline.frame_position(fits.Header({})) is None                         # no keyword at all (was KeyError)
+    ra, dec = offline.frame_position(fits.Header({'CAT-RA': 'N/A', 'CAT-DEC': 'N/A',
+                                                  'RA': '23:04:52.1', 'DEC': '+17:25:29'}))
+    assert abs(ra - 346.217) < 1e-3 and abs(dec - 17.4247) < 1e-3                # falls back to the pointing
+    ra, dec = offline.frame_position(fits.Header({'CAT-RA': '11:19:08.7', 'CAT-DEC': '+21:19:18', 'RA': 'N/A'}))
+    assert abs(ra - 169.786) < 1e-3                                               # catalogue position first
+
+
+def test_classify_skips_spectrum_without_position_and_keeps_the_rest(tmp_path, monkeypatch):
+    import banzai_floyds.dbs as dbs
+    monkeypatch.setattr(dbs, 'find_flux_standard', lambda ra, dec, db: None)       # every spectrum is science
+    _raw(tmp_path / 'x-0001-a00.fits.fz', 'ARC', 'SCI')
+    _raw(tmp_path / 'x-0002-w00.fits.fz', 'LAMPFLAT', 'SCI')
+    _spectrum(tmp_path / 'x-0003-e00.fits.fz', RA='N/A', DEC='N/A')                # the bad header
+    _spectrum(tmp_path / 'x-0004-e00.fits.fz', RA='23:04:52.1', DEC='+17:25:29')
+    skipped = []
+    groups = offline.classify(str(tmp_path), 'sqlite:///unused.db', skipped=skipped)
+    assert len(groups['arcs']) == 1 and len(groups['flats']) == 1
+    assert [p.split('/')[-1] for p in groups['science']] == ['x-0004-e00.fits.fz']
+    assert skipped and skipped[0][0] == 'x-0003-e00.fits.fz' and "'N/A'" in skipped[0][1]

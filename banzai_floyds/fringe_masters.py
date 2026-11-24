@@ -125,9 +125,11 @@ def _standard_frame(one_d, two_d):
     good = np.isfinite(columns[order])
     arc_key = 'wavelength_arc' if 'wavelength_arc' in extracted.colnames else 'wavelength'
     x = np.interp(np.asarray(extracted[arc_key], float), keys[order][good], columns[order][good])
-    position = SkyCoord(header.get('CAT-RA', header['RA']), header.get('CAT-DEC', header['DEC']),
-                        unit=(u.hourangle, u.deg))
-    reference = _reference(position.ra.deg, position.dec.deg)
+    from banzai_floyds.offline import frame_position
+    position = frame_position(header)        # 'N/A' / missing CAT-RA falls back to RA (AVA, 24 Nov 2026)
+    if position is None:
+        raise ValueError(f"{os.path.basename(one_d)}: no usable position in the header")
+    reference = _reference(*position)
     wavelength = np.asarray(extracted['wavelength'], float)
     model = standard_at_resolution(wavelength, np.asarray(reference['wavelength'], float),
                                    np.asarray(reference['flux'], float), 8.0)
@@ -177,7 +179,7 @@ def _template_frames(pairs):
     for one_d, two_d in pairs:
         try:
             frames.append(_standard_frame(one_d, two_d)[:3])
-        except KeyError as error:
+        except (KeyError, ValueError) as error:      # ValueError: no usable position (AVA, 24 Nov 2026)
             print(f'residual templates: {os.path.basename(one_d)} skipped ({error})', flush=True)
     return frames
 

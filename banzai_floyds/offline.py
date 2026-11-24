@@ -208,11 +208,35 @@ def raw_header(path):
         return hdul[0].header.copy()
 
 
-def classify(raw_dir, db_address):
-    """{kind: [paths sorted by DATE-OBS]} from the headers of the raw frames."""
-    from astropy.io import fits
+#: header values that mean "no position" (the archive writes 'N/A' in some raw headers: AVA, Mrk 876 / PG 1119+120)
+NO_POSITION = ('', 'N/A', 'NA', 'NAN', 'NONE', 'UNKNOWN')
+
+
+def frame_position(header):
+    """(ra_deg, dec_deg) of a raw frame, or None when it has no usable position. The catalogue position first
+    (CAT-RA / CAT-DEC, as BANZAI uses: the pointing can be several arcsec off), else the pointing RA / DEC; values
+    such as 'N/A', empty or unparseable count as missing (AVA, 24 Nov 2026: one RA = 'N/A' header raised in
+    SkyCoord and stopped the whole chain, so Mrk 876 and PG 1119+120 had no spectrum reduced at all)."""
     from astropy.coordinates import SkyCoord
     import astropy.units as u
+    for ra_key, dec_key in (('CAT-RA', 'CAT-DEC'), ('RA', 'DEC')):
+        ra, dec = header.get(ra_key), header.get(dec_key)
+        if ra is None or dec is None or str(ra).strip().upper() in NO_POSITION \
+                or str(dec).strip().upper() in NO_POSITION:
+            continue
+        try:
+            position = SkyCoord(ra, dec, unit=(u.hourangle, u.deg))
+        except (ValueError, TypeError):
+            continue
+        return float(position.ra.deg), float(position.dec.deg)
+    return None
+
+
+def classify(raw_dir, db_address, skipped=None):
+    """{kind: [paths sorted by DATE-OBS]} from the headers of the raw frames. Arcs and lamp flats need no position.
+    A spectrum without a usable position (:func:`frame_position`) cannot be matched to a flux standard: it is left
+    out with a ``SKIPPED <file>: <reason>`` line (the AVA spec log reads these), and added to ``skipped`` (a list of
+    (file, reason)) when given; one bad header never stops the chain."""
     from banzai_floyds.dbs import find_flux_standard
     groups = {kind: [] for kind in KINDS}
     for path in sorted(glob.glob(os.path.join(raw_dir, '*.fits*'))):
@@ -223,10 +247,15 @@ def classify(raw_dir, db_address):
         elif obstype == 'LAMPFLAT':
             kind = 'flats'
         elif obstype == 'SPECTRUM':
-            # the catalogue position, as BANZAI uses (the pointing can be several arcsec off)
-            ra, dec = header.get('CAT-RA', header['RA']), header.get('CAT-DEC', header['DEC'])
-            position = SkyCoord(ra, dec, unit=(u.hourangle, u.deg))
-            standard = find_flux_standard(position.ra.deg, position.dec.deg, db_address)
+            position = frame_position(header)
+            if position is None:
+                why = (f"no usable position (CAT-RA={header.get('CAT-RA')!r}, RA={header.get('RA')!r}, "
+                       f"DEC={header.get('DEC')!r})")
+                print(f'SKIPPED {os.path.basename(path)}: {why}', flush=True)
+                if skipped is not None:
+                    skipped.append((os.path.basename(path), why))
+                continue
+            standard = find_flux_standard(position[0], position[1], db_address)
             kind = 'standards' if standard is not None else 'science'
         else:
             continue
