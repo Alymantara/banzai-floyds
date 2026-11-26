@@ -16,7 +16,7 @@ from banzai_floyds.utils.binning_utils import bin_data
 from banzai_floyds.utils.fitting_utils import weighted_linear_fit
 from banzai_floyds.utils.order_utils import get_order_2d_region
 from banzai_floyds.utils.wavelength_utils import WavelengthSolution, tilt_coordinates, gauss_hermite_residuals
-from banzai_floyds.utils.wavelength_utils import gauss_hermite_jacobian
+from banzai_floyds.utils.wavelength_utils import gauss_hermite_jacobian, wavelength_solution_problems
 from banzai_floyds.arc_lines import arc_lines_table
 from banzai_floyds.utils.fitting_utils import gauss, gauss_hermite, fwhm_to_sigma, sigma_to_fwhm, parameter_variances
 from banzai_floyds.utils.fitting_utils import gauss_hermite_derivatives
@@ -241,6 +241,15 @@ class WavelengthSolutionLoader(FLOYDSCalibrationUser):
             super(WavelengthSolutionLoader, self).on_missing_master_calibration(image)
 
     def apply_master_calibration(self, image: FLOYDSCalibrationFrame, super_calibration_image):
+        problems = wavelength_solution_problems(super_calibration_image.wavelengths.wavelength_polynomials)
+        if problems:
+            # A broken master would cost the science frame hours in the sky fit and give no usable spectrum;
+            # an arc gets fit from scratch instead of warm-starting from it, so the error doesn't spread (AVA B100).
+            logger.error(f'Master arc {super_calibration_image.filename} has an unphysical wavelength solution '
+                         f'({"; ".join(problems)}); flag it is_bad in the calibration database. '
+                         + ('Fitting this arc without a warm start.' if image.obstype.upper() == 'ARC'
+                            else 'Skipping this frame.'), image=image)
+            return image if image.obstype.upper() == 'ARC' else None
         image.wavelengths = super_calibration_image.wavelengths
         image.meta['L1IDARC'] = super_calibration_image.filename, 'ID of ARC/DOUBLE frame'
         return image
@@ -1208,6 +1217,12 @@ class CalibrateWavelengths(Stage):
             tilt_polynomials.append(tilt_polynomial)
         image.wavelengths = WavelengthSolution(wavelength_polynomials, tilt_polynomials, image.orders, best_fit_lsf)
         image.is_master = True
+        # A fit that converged on the wrong lines can still pass the line count checks above, e.g. a red order
+        # of 2618-2662 A with residuals of thousands of Angstrom (coj en12 20260721-0019, AVA B100)
+        problems = wavelength_solution_problems(wavelength_polynomials)
+        if problems:
+            logger.error(f'Unphysical wavelength solution ({"; ".join(problems)}); not using this arc.', image=image)
+            image.is_bad = True
 
         # Extract the data
         binned_data = bin_data(image.data, image.uncertainty, image.wavelengths, image.orders)

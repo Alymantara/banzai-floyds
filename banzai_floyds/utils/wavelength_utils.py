@@ -7,6 +7,43 @@ import numpy as np
 
 from banzai_floyds.utils.fitting_utils import gauss_hermite, gauss_hermite_derivatives, sigma_to_fwhm
 
+# Angstroms per pixel of each FLOYDS order, the same at both sites
+NOMINAL_DISPERSIONS = {1: 3.485, 2: 1.723}
+
+
+def wavelength_solution_problems(wavelength_polynomials, nominal_dispersions=None, tolerance=2.0) -> list[str]:
+    """What is physically wrong with a wavelength solution, empty if nothing.
+
+    Every order must have wavelength increasing with x, with a median dispersion within a factor `tolerance` of
+    the nominal one. A failed arc fit can come out as a nearly flat polynomial (e.g. 2618-2662 A, or 16693-16696 A,
+    across the red order, with a negative dispersion): it is caught here in milliseconds, where downstream it sends
+    the sky knot placement into a loop that never ends (AVA B100).
+
+    Parameters
+    ----------
+    wavelength_polynomials : list of Legendre
+        wavelength(x) of each order, indexed by order_id - 1, with x over the polynomial's domain.
+    nominal_dispersions : dict, optional
+        {order_id: Angstrom per pixel}; NOMINAL_DISPERSIONS by default.
+    tolerance : float
+        Factor the median dispersion may differ from the nominal by.
+    """
+    nominal_dispersions = NOMINAL_DISPERSIONS if nominal_dispersions is None else nominal_dispersions
+    problems = []
+    for order_id, polynomial in enumerate(wavelength_polynomials, start=1):
+        x = np.linspace(*polynomial.domain, 201)
+        wavelength = polynomial(x)
+        dispersion = np.diff(wavelength) / np.diff(x)
+        median = float(np.median(dispersion))
+        expected = nominal_dispersions.get(order_id)
+        description = (f'order {order_id}: {wavelength.min():.0f}-{wavelength.max():.0f} A, '
+                       f'median dispersion {median:+.3f} A/pixel')
+        if not np.all(np.isfinite(wavelength)) or np.any(dispersion <= 0):
+            problems.append(f'{description}, wavelength does not increase along the order')
+        elif expected is not None and not expected / tolerance <= median <= expected * tolerance:
+            problems.append(f'{description}, expected about {expected:.3f}')
+    return problems
+
 
 class WavelengthSolution:
     def __init__(self, wavelength_polynomials, tilt_polynomials, orders, lsf_params):

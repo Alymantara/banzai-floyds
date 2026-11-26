@@ -84,6 +84,10 @@ def adaptive_knots(wavelength: np.ndarray, sky_spectrum: BSpline, dispersion: fl
         Minimum excess of a sky line over the continuum, in robust standard deviations of the first pass about its
         continuum.
     """
+    if not np.isfinite(dispersion) or dispersion <= 0:
+        # A negative step never reaches the red end and the loop below would append knots until the worker is
+        # killed (hours and gigabytes on the VM, AVA B100); callers check this first, so this is a backstop.
+        raise ValueError(f'adaptive_knots needs a positive dispersion, got {dispersion}')
     grid = np.arange(np.min(wavelength), np.max(wavelength) + dispersion, dispersion)
     sky = sky_spectrum(grid)
     continuum = median_filter(sky, continuum_filter_width, mode='nearest')
@@ -243,6 +247,11 @@ def fit_background(data: Table, read_noise: float, spatial_background_order: int
         to_fit = np.logical_and(to_fit, np.abs(order_data['y_profile']) > mask_width * order_data['profile_sigma'])
         wavelength = np.asarray(order_data['wavelength'][binned])
         dispersion = float(np.median(order_data['order_wavelength_bin_width'][binned]))
+        if not np.isfinite(dispersion) or dispersion <= 0 or np.ptp(wavelength) < 10 * dispersion:
+            # Only an unphysical wavelength solution gets here (the arc checks should have stopped it)
+            logger.error(f'Not fitting the sky in order {order}: its wavelengths ({np.min(wavelength):.0f}-'
+                         f'{np.max(wavelength):.0f} A, {dispersion:+.3f} A per bin) come from a broken arc.')
+            continue
         first_pass_knots = uniform_knots(wavelength, line_knot_spacing * dispersion, wavelength_spline_degree)
         background, first_pass, _ = fit_order_background(
             order_data, np.asarray(order_data['uncertainty']),

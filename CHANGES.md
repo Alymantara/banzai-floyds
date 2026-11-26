@@ -6,6 +6,12 @@ rm-improvements (unreleased; fork Alymantara/banzai-floyds)
 
 Improved reduction for reverberation mapping (see docs/INSTALL_RM.md; all on by default):
 
+- Arcs with an unphysical wavelength solution (wavelength not increasing along an order, or a dispersion more than
+  a factor 2 from nominal) are marked bad when made and refused when loaded (the frame is skipped, an arc fits
+  without the warm start). The sky fit skips an order with a non-positive dispersion, and `adaptive_knots` raises
+  on one: before, a red order of 2618-2662 A with a negative dispersion sent the knot loop backwards forever,
+  hours and gigabytes per frame on the VM (AVA B100).
+
 - Harmonic fringe model fitted to each extracted spectrum (`HarmonicFringeCorrector`, `FRINGE_METHOD='harmonic'`),
   with the phase from a lamp-flat master per slit and window, fitted jointly with a telluric template (non-negative
   depths), nodes every 200 A from 6200 A, and a static residual fringe template per slit measured on the standards.
